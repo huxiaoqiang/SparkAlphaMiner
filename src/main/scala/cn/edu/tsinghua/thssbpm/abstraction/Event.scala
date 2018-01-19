@@ -13,5 +13,6 @@ class Event(n: String) extends Serializable {
     case _ => false
   }
 
+  //can not deal with duplication of name
   override def hashCode(): Int = name.hashCode
 }

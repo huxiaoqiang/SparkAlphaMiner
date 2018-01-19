@@ -1,12 +1,10 @@
 package cn.edu.tsinghua.thssbpm
 
 import org.apache.spark.sql.{DataFrame, SQLContext}
-import org.apache.spark.{SparkConf, SparkContext}
-
 
 import scala.collection.mutable.{Map => mMap, Set => mSet}
-import scala.util.control.Breaks
-import abstraction.{Event, Footprint, Place}
+import abstraction.{Event, Footprint, Place, Trace}
+import org.apache.spark.rdd.RDD
 
 /**
 * SparkAlpha Miner
@@ -17,23 +15,30 @@ import abstraction.{Event, Footprint, Place}
 object Alpha {
 
   //val filePath = "hdfs://192.168.3.200:9000/spark/Demo/logs/test.xes"
-  val break = new Breaks
 
   def alphaMiner(filePath:String,sqlContext:SQLContext): Unit = {
 
     //Read .xes log file to trace string list
-    val traceList: DataFrame = Util.parseXesLogFromHDFS(sqlContext, filePath)
+    val traceListRDD: RDD[Trace] = Util.parseXesLogFromHDFSToRDD(sqlContext, filePath)
 
-    val collectedSortedEvents = traceList.rdd
-      .flatMap(r => r.getSeq[String](0))
+    val traceList = Util.parseXesLogFromHDFS(sqlContext, filePath)
+
+    val sortedEventsRDD = traceListRDD.flatMap(trace => trace.eventList)
       .distinct()
-      .collect()
-      .sorted
-      .map(e => new Event(e))
+      .sortBy(event=>event.name)
+
+    val collectedSortedEvents = sortedEventsRDD.collect()
+//      traceList.rdd
+//      .flatMap(r => r.getSeq[String](0))
+//      .distinct()
+//      .collect()
+//      .sorted
+//      .map(e => new Event(e))
 
 
     //step 1,2,3 get Tw,Ti,To
     val events = collectedSortedEvents.toSet
+    //val startingEventsRDD = traceListRDD.map(trace=>trace.eventList.head)
     val startingEvents = traceList.rdd.map(s => {
       s.getSeq[String](0).head
     })
@@ -73,8 +78,17 @@ object Alpha {
     val out: Place = new Place(Set[Event](), Set[Event](), "Out")
     connectSourceAndSink(in, out, startingEvents, endingEvents, workflowPlace, placeToEventTransitions, eventToPlaceTransitions)
     val workflowNetwork: WorkflowNetwork = new WorkflowNetwork(events, workflowPlace.toSet, eventToPlaceTransitions.toSet, eventToPlaceTransitionsMap.toMap, placeToEventTransitions.toSet, in, out)
-  }
 
+    var correctRunTrace = 0
+    var errorRunTrace = 0
+    traceList.rdd.map(row => {
+      if(workflowNetwork.runTrace(row.getSeq[String](0).map(s => new Event(s)).toList))
+        correctRunTrace+=1
+      else
+        errorRunTrace+=1
+    })
+    println(correctRunTrace.toFloat/(correctRunTrace+errorRunTrace))
+  }
 
   def getPlacesFromFootprint(footPrint: Array[Array[Util.Relation.Value]],
                              events: Set[Event]): Set[Place] = {

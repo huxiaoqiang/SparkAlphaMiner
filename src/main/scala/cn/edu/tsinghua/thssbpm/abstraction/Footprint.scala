@@ -1,6 +1,6 @@
 package cn.edu.tsinghua.thssbpm.abstraction
 
-import cn.edu.tsinghua.thssbpm.Alpha.{break}
+import scala.util.control.Breaks
 import cn.edu.tsinghua.thssbpm.Util
 import cn.edu.tsinghua.thssbpm.Util.Relation.{NoRelation, Parallel, ReversedSequence, Sequence}
 import org.apache.spark.sql.DataFrame
@@ -13,7 +13,7 @@ object Footprint {
   val eventNameToMatrixIndex: mutable.Map[String, Int] = mutable.Map[String, Int]()
   var footprint: Array[Array[Util.Relation.Value]] = Array[Array[Util.Relation.Value]]()
   var sortedEvents: List[Event] = List[Event]()
-
+  val break = new Breaks
   override def toString: String = {
     var sb = new mutable.StringBuilder("\t")
     sortedEvents.foreach(event => sb.append(event.name + "\t"))

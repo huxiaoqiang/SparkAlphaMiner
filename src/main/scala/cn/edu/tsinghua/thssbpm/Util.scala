@@ -1,8 +1,11 @@
 package cn.edu.tsinghua.thssbpm
 
 import org.apache.spark.sql.{DataFrame, SQLContext}
+
 import collection.mutable.{Set => mSet}
-import abstraction.Event
+import abstraction.{Event, Trace}
+import cn.edu.tsinghua.thssbpm.abstraction.Footprint.eventNameToMatrixIndex
+import org.apache.spark.rdd.RDD
 object Util {
 
   /**
@@ -37,6 +40,22 @@ object Util {
     sets.toSet
   }
 
+  def parseXesLogFromHDFSToRDD(sqlContext: SQLContext, filePath: String): RDD[Trace] = {
+    var df: DataFrame = null
+
+    df = sqlContext.read
+      .format("xml")
+      .option("rowTag", "trace")
+      .load(filePath)
+
+    val traceList = df.select("event") //get trace list
+      .take(df.count().toInt) //take all trace list as Row list
+      .map(t => t.toString().split("concept:name,").tail.map(s => s.split("]")(0)))
+
+    import sqlContext.implicits._
+    parseRDDToTraceList(traceList.toSeq.toDF("trace"))
+  }
+
   def parseXesLogFromHDFS(sqlContext: SQLContext, filePath: String): DataFrame = {
     var df: DataFrame = null
 
@@ -69,6 +88,11 @@ object Util {
     castTraceList
   }
 
+  def parseRDDToTraceList(traceListDataFrame:DataFrame):RDD[Trace]= {
+    traceListDataFrame.rdd.map(row => {
+      new Trace(row.getSeq[String](0).map(s => new Event(s)).toList)
+    })
+  }
   /**
   * event four relation
   * Sequence: ->

@@ -30,7 +30,7 @@ object Main {
 
         //Set spark conf
         val conf = new SparkConf().setAppName(appName)
-        //.setMaster("local")
+        .setMaster("local")
         val sc = new SparkContext(conf)
         val sqlContext: SQLContext = new SQLContext(sc)
         Alpha.alphaMiner(filePath = filePath,sqlContext=sqlContext)
