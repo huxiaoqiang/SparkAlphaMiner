@@ -3,15 +3,15 @@ package cn.edu.tsinghua.thssbpm.abstraction
 import scala.util.control.Breaks
 import cn.edu.tsinghua.thssbpm.Util
 import cn.edu.tsinghua.thssbpm.Util.Relation.{NoRelation, Parallel, ReversedSequence, Sequence}
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.DataFrame
-import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.SparkContext
+import org.apache.spark.sql.{DataFrame, SQLContext}
 
 import scala.collection.mutable.{Map => mMap}
 import scala.Array.ofDim
 import scala.collection.mutable
+import org.apache.spark.rdd.RDD
 
-object Footprint {
+object FootprintRDD {
   val eventNameToMatrixIndex: mutable.Map[String, Int] = mutable.Map[String, Int]()
   var footprint: Array[Array[Util.Relation.Value]] = Array[Array[Util.Relation.Value]]()
   var sortedEvents: List[Event] = List[Event]()
@@ -44,16 +44,15 @@ object Footprint {
     * @param traceList (DataFrame) name of trace list and it is a dataFrame data structure
     * @return footprint a two-dimensional array
     */
-  def create(events: Set[Event], traceList:  RDD[List[String]],sc:SparkContext): Array[Array[Util.Relation.Value]] = {
-    val eventNum = events.size
+  def create(sortedEventsRDD: RDD[Event], traceListRDD: RDD[Trace],sc:SparkContext): RDD[Array[Util.Relation.Value]] = {
+    val eventNum = sortedEventsRDD.count().toInt
+
     footprint = ofDim[Util.Relation.Value](eventNum, eventNum)
     for {i <- 0 until eventNum
          j <- 0 until eventNum}
       footprint(i)(j) = NoRelation
-    sortedEvents = events.toList.sortBy(e => e.name)
     for (i <- 0 until eventNum)
-      eventNameToMatrixIndex += (sortedEvents(i).name -> i)
-    val index = sc.broadcast(eventNameToMatrixIndex)
+      eventNameToMatrixIndex += (sortedEventsRDD.collect()(i).name -> i)
 
     /**
       * Parse Direct Follows
@@ -73,21 +72,19 @@ object Footprint {
       * ((Event1,Event2),(false,false)) => Event1 # Event2
       **/
 
-    //find direct follow relaitionship
-    val followRelationDF = traceList.map(row => {
-      val trace = row.map(s => new Event(s))
+    val followRelationDF = traceListRDD.map(trace=> {
       val directFollows = mMap[Tuple2[Event, Event], Tuple2[Boolean, Boolean]]()
       for {
-        i <- 0 until trace.length - 1
-        j <- i + 1 until trace.length
+        i <- 0 until trace.eventList.length - 1
+        j <- i + 1 until trace.eventList.length
       } {
-        directFollows += ((trace(i), trace(j)) -> (false, false))
+        directFollows += ((trace.eventList(i), trace.eventList(j)) -> (false, false))
       }
-      for (i <- 0 to trace.length - 2) {
-        if (index.value(trace(i).name) < index.value(trace(i + 1).name))
-          directFollows((trace(i), trace(i + 1))) = (true, false)
+      for (i <- 0 to trace.eventList.length - 2) {
+        if (eventNameToMatrixIndex(trace.eventList(i).name) < eventNameToMatrixIndex(trace.eventList(i + 1).name))
+          directFollows((trace.eventList(i), trace.eventList(i + 1))) = (true, false)
         else
-          directFollows((trace(i + 1), trace(i))) = (false, true)
+          directFollows((trace.eventList(i + 1), trace.eventList(i))) = (false, true)
       }
       directFollows.clone().toList
     })
@@ -97,7 +94,6 @@ object Footprint {
       .reduceByKey((x, y) => ((x._1 || y._1), (x._2 || y._2)))
       .collect()
 
-
     /**
       * Generate footprint matrix
       * follows: ((event1,event2),(Boolean,Boolean))
@@ -105,12 +101,10 @@ object Footprint {
       * if we have ((A,B),(true,false)),it means we have A->B and we don't have A<-B
       * if we have ((A,B),(false,true)),it means we have A<-B and we don't have A->B
       * if we have ((A,B),(true,true)), it means we have both A->B and A<-B, then => A||B
-      * if we have ((A,B),(false,false)),it means A has no relation with B which means A#B
+      * if we have ((A,B),(false,true)),it means A has no relation with B which means A#B
       */
-
     var forward: Util.Relation.Value = NoRelation
     var backward: Util.Relation.Value = NoRelation
-
     relationMap.foreach((follows: Tuple2[Tuple2[Event, Event], Tuple2[Boolean, Boolean]]) => {
       follows._2 match {
         case (false, false) => {
@@ -133,7 +127,7 @@ object Footprint {
       footprint(eventNameToMatrixIndex(follows._1._1.name))(eventNameToMatrixIndex(follows._1._2.name)) = forward
       footprint(eventNameToMatrixIndex(follows._1._2.name))(eventNameToMatrixIndex(follows._1._1.name)) = backward
     })
-    footprint
+     sc.makeRDD(footprint.toSeq)
   }
 
   def printFootPrint(): Unit = {

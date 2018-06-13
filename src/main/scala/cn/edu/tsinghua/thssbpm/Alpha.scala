@@ -1,93 +1,87 @@
 package cn.edu.tsinghua.thssbpm
 
-import org.apache.spark.sql.{DataFrame, SQLContext}
+import org.apache.spark.sql.SQLContext
 
 import scala.collection.mutable.{Map => mMap, Set => mSet}
-import abstraction.{Event, Footprint, Place, Trace}
-import org.apache.spark.rdd.RDD
+import abstraction.{Event, Footprint, Place}
+import org.apache.spark.SparkContext
+import org.apache.spark.storage.StorageLevel
 
 /**
 * SparkAlpha Miner
 * @author huxiaoqiang
 */
 
-
 object Alpha {
 
-  //val filePath = "hdfs://192.168.3.200:9000/spark/Demo/logs/test.xes"
+  def alphaMiner(filePath:String,outputPath:String,sqlContext:SQLContext,sc:SparkContext): Unit = {
+    //read the logs
+    val traceList = Util.parseTextLogHDFS(sc, filePath)
+    traceList.persist(StorageLevel.MEMORY_AND_DISK)
 
-  def alphaMiner(filePath:String,sqlContext:SQLContext): Unit = {
-
-    //Read .xes log file to trace string list
-    val traceListRDD: RDD[Trace] = Util.parseXesLogFromHDFSToRDD(sqlContext, filePath)
-
-    val traceList = Util.parseXesLogFromHDFS(sqlContext, filePath)
-
-    val sortedEventsRDD = traceListRDD.flatMap(trace => trace.eventList)
-      .distinct()
-      .sortBy(event=>event.name)
-
-    val collectedSortedEvents = sortedEventsRDD.collect()
-//      traceList.rdd
-//      .flatMap(r => r.getSeq[String](0))
-//      .distinct()
-//      .collect()
-//      .sorted
-//      .map(e => new Event(e))
+    val collectedSortedEvents = traceList
+      .flatMap(r=>r.map(r=>(r,1)))
+      .reduceByKey((i1,i2)=>1)
+      .collect()
+      .map(a=> new Event(a._1))
 
 
-    //step 1,2,3 get Tw,Ti,To
+    //step 1,2,3 get Tw,Ti,Tox
     val events = collectedSortedEvents.toSet
     //val startingEventsRDD = traceListRDD.map(trace=>trace.eventList.head)
-    val startingEvents = traceList.rdd.map(s => {
-      s.getSeq[String](0).head
-    })
+    val startingEvents = traceList.map(s => s.head)
       .distinct()
       .collect()
       .toList
       .map(e => new Event(e))
       .toSet
 
-    val endingEvents = traceList.rdd.map(s => {
-      s.getSeq[String](0).last
-    })
+    val endingEvents = traceList.map(s => s.last)
       .distinct()
       .collect()
       .toList
       .map(e => new Event(e))
       .toSet
+//
+//    //Get footprint matrix
+    val footprint = Footprint.create(events, traceList, sc)
+    
 
-    //Get footprint matrix
-    val footprint = Footprint.create(events, traceList)
+    val outRdd = sc.parallelize(Footprint.toString)
+    outRdd.repartition(1).saveAsTextFile(outputPath)
     println("footprint matrix is as follow: ")
     println(Footprint.toString)
     //Step 4 generate places
-    println("Getting places from footprint matrix")
-    val xl = getPlacesFromFootprint(footprint, events)
-
-    //Step 5 reduce xl to get workflow places
-    println("reduce xl to get workflow places")
-    val workflowPlace: mSet[Place] = reducePlaces(xl)
-
-    //Step 7: Create Transitions
-    val (eventToPlaceTransitions, eventToPlaceTransitionsMap) = createEventToPlaceTransitions(events, workflowPlace.toSet)
-    val placeToEventTransitions = createPlaceToEventTransitions(events, workflowPlace.toSet)
-
-    //Step 6: Source place and Sink place
-    val in: Place = new Place(Set[Event](), Set[Event](), "In")
-    val out: Place = new Place(Set[Event](), Set[Event](), "Out")
-    connectSourceAndSink(in, out, startingEvents, endingEvents, workflowPlace, placeToEventTransitions, eventToPlaceTransitions)
-    val workflowNetwork: WorkflowNetwork = new WorkflowNetwork(events, workflowPlace.toSet, eventToPlaceTransitions.toSet, eventToPlaceTransitionsMap.toMap, placeToEventTransitions.toSet, in, out)
-
-    var correctRunTrace = 0
-    var errorRunTrace = 0
-    traceList.rdd.map(row => {
-      if(workflowNetwork.runTrace(row.getSeq[String](0).map(s => new Event(s)).toList))
-        correctRunTrace+=1
-      else
-        errorRunTrace+=1
-    })
-    println(correctRunTrace.toFloat/(correctRunTrace+errorRunTrace))
+//    println("Getting places from footprint matrix")
+//    val xl = getPlacesFromFootprint(footprint, events)
+//
+//    startTime = System.nanoTime()
+//    //Step 5 reduce xl to get workflow places
+//    println("reduce xl to get workflow places")
+//    val workflowPlace: mSet[Place] = reducePlaces(xl)
+//    endTime =System.nanoTime()
+//
+//    println("Reduce places taking time: " + (endTime - startTime)/(60*1000000.0) + "min" )
+//
+//    //Step 7: Create Transitions
+//    val (eventToPlaceTransitions, eventToPlaceTransitionsMap) = createEventToPlaceTransitions(events, workflowPlace.toSet)
+//    val placeToEventTransitions = createPlaceToEventTransitions(events, workflowPlace.toSet)
+//
+//    //Step 6: Source place and Sink place
+//    val in: Place = new Place(Set[Event](), Set[Event](), "In")
+//    val out: Place = new Place(Set[Event](), Set[Event](), "Out")
+//    connectSourceAndSink(in, out, startingEvents, endingEvents, workflowPlace, placeToEventTransitions, eventToPlaceTransitions)
+//    val workflowNetwork: WorkflowNetwork = new WorkflowNetwork(events, workflowPlace.toSet, eventToPlaceTransitions.toSet, eventToPlaceTransitionsMap.toMap, placeToEventTransitions.toSet, in, out)
+//    println("done")
+//    var correctRunTrace = 0
+//    var errorRunTrace = 0
+//    traceList.rdd.map(row => {
+//      if(workflowNetwork.runTrace(row.getSeq[String](0).map(s => new Event(s)).toList))
+//        correctRunTrace+=1
+//      else
+//        errorRunTrace+=1
+//    })
+//    println(correctRunTrace.toFloat/(correctRunTrace+errorRunTrace))
   }
 
   def getPlacesFromFootprint(footPrint: Array[Array[Util.Relation.Value]],
