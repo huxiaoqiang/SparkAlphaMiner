@@ -48,7 +48,7 @@ object Alpha {
     
 
     val outRdd = sc.parallelize(Footprint.toString)
-    outRdd.repartition(1).saveAsTextFile(outputPath)
+    outRdd.repartition(1).saveAsTextFile(outputPath)it
     println("footprint matrix is as follow: ")
     println(Footprint.toString)
     //Step 4 generate places
